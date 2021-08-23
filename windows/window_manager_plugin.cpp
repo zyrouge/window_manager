@@ -13,6 +13,8 @@
 #include <sstream>
 
 namespace {
+    static bool window_fullscreened = false;
+    static RECT window_before_fullscreen;
 
     class WindowManagerPlugin : public flutter::Plugin {
     public:
@@ -134,6 +136,61 @@ namespace {
         result->Success(flutter::EncodableValue(true));
     }
 
+    // Ported from https://github.com/alexmercerind/flutter-desktop-embedding/blob/da98a3b5a0e2b9425fbcb2a3e4b4ba50754abf93/plugins/window_size/windows/window_size_plugin.cpp#L255
+    void SetFullScreen(
+        const flutter::MethodCall<flutter::EncodableValue>& method_call,
+        std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+        const flutter::EncodableMap& args = std::get<flutter::EncodableMap>(*method_call.arguments());
+
+        bool setFull = std::get<bool>(args.at(flutter::EncodableValue("isFullScreen")));
+        if (setFull == window_fullscreened) {
+            result->Success();
+            return;
+        }
+
+        HWND mainWindow = GetActiveWindow();
+        HMONITOR windowMonitor = MonitorFromWindow(mainWindow, MONITOR_DEFAULTTONEAREST);
+
+        if (setFull) {
+            MONITORINFO info;
+            info.cbSize = sizeof(MONITORINFO);
+            GetMonitorInfo(windowMonitor, &info);
+            SetWindowLongPtr(mainWindow, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+            GetWindowRect(mainWindow, &window_before_fullscreen);
+            SetWindowPos(
+                mainWindow,
+                HWND_TOPMOST,
+                info.rcMonitor.left, info.rcMonitor.top,
+                info.rcMonitor.right - info.rcMonitor.left,
+                info.rcMonitor.bottom - info.rcMonitor.top, 
+                SWP_SHOWWINDOW
+            );
+            ShowWindow(mainWindow, SW_MAXIMIZE);
+            window_fullscreened = true;
+        } else {
+            SetWindowLongPtr(mainWindow, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+            SetWindowPos(
+                mainWindow,
+                HWND_NOTOPMOST,
+                window_before_fullscreen.left,
+                window_before_fullscreen.top,
+                window_before_fullscreen.right - window_before_fullscreen.left,
+                window_before_fullscreen.bottom - window_before_fullscreen.top,
+                SWP_SHOWWINDOW
+            );
+            ShowWindow(mainWindow, SW_RESTORE);
+            window_fullscreened = false;
+        }
+
+        result->Success(flutter::EncodableValue(window_fullscreened));
+    }
+
+    void IsFullScreen(
+        const flutter::MethodCall<flutter::EncodableValue>& method_call,
+        std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+        result->Success(flutter::EncodableValue(window_fullscreened));
+    }
+
     void WindowManagerPlugin::HandleMethodCall(
         const flutter::MethodCall<flutter::EncodableValue>& method_call,
         std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
@@ -154,6 +211,12 @@ namespace {
         }
         else if (method_call.method_name().compare("setAlwaysOnTop") == 0) {
             SetAlwaysOnTop(method_call, std::move(result));
+        }
+        else if (method_call.method_name().compare("setFullScreen") == 0) {
+            SetFullScreen(method_call, std::move(result));
+        }
+        else if (method_call.method_name().compare("isFullScreen") == 0) {
+            IsFullScreen(method_call, std::move(result));
         }
         else {
             result->NotImplemented();
